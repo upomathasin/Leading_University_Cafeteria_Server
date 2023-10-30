@@ -10,6 +10,24 @@ console.log(process.env.DB_Password);
 app.use(express.json());
 app.use(cors());
 
+const verifyJWT = (req, res, next) => {
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    return res.status(401).send({ error: true, message: " unauthorized" });
+  }
+  const token = authorization.split(" ")[1];
+  jwt.verify(token, process.env.ACCCESS_TOKEN_SECRET, (error, decoded) => {
+    if (error) {
+      return res
+        .status(401)
+        .send({ error: true, message: "unauthorized access" });
+    }
+    req.decoded = decoded;
+    console.log("decoded : ", decoded);
+    next();
+  });
+};
+
 app.get("/", (req, res) => {
   res.send("Lu");
 });
@@ -42,17 +60,66 @@ async function run() {
       // console.log(result);
       res.send(result);
     });
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+      const query = { email: email };
+      const user = await usersCollection.findOne(query);
+      if (user.role !== "admin") {
+        console.log(user);
+        return res
+          .status(401)
+          .send({ error: true, message: "You are not allowed to access !" });
+      } else {
+        next();
+      }
+    };
+
+    app.post("/menu", verifyJWT, verifyAdmin, async (req, res) => {
+      const menuItem = req.body;
+      console.log("email", req.headers.email);
+      console.log("menuItem", menuItem);
+      const result = await menuCollection.insertOne(menuItem);
+      res.send(result);
+    });
+    app.delete("/menu/:id", verifyJWT, verifyAdmin, async (req, res) => {
+      const deletetedId = req.params.id;
+
+      const result = await menuCollection.deleteOne({ _id: deletetedId });
+      res.send(result);
+
+      console.log("Menu Deleted", deletetedId);
+    });
     app.get("/reviews", async (req, res) => {
       const result = await reviewsCollecion.find().toArray();
       //   console.log(result);
       res.send(result);
     });
 
-    app.get("/users", async (req, res) => {
+    app.get("/users", verifyJWT, async (req, res) => {
       const result = await usersCollection.find().toArray();
       res.send(result);
     });
 
+    app.post("/jwt", (req, res) => {
+      const user = req.body;
+      console.log(user);
+      const token = jwt.sign(user, process.env.ACCCESS_TOKEN_SECRET, {
+        expiresIn: "1h",
+      });
+      res.send({ token });
+    });
+
+    app.get("/users/admin/:email", verifyJWT, async (req, res) => {
+      const email = req.params.email;
+      if (req.decoded.email !== email) {
+        res.send({ admin: false });
+      }
+      const query = { email: email };
+      const user = await usersCollection.findOne(query);
+      const result = { admin: user?.role === "admin" };
+      res.send(result);
+    });
     app.patch("/users/admin/:id", async (req, res) => {
       const id = req.params.id;
       console.log(id);
@@ -82,10 +149,9 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/carts", async (req, res) => {
-      //  console.log(req.query);
-
+    app.get("/carts", verifyJWT, async (req, res) => {
       const email = req.query.email;
+      console.log(req.headers.authorization.split(" ")[1]);
       if (!email) {
         res.send([]);
       } else {
